@@ -115,6 +115,27 @@ def _execute_search_songs(tool_input: dict, songs: list) -> list:
     ]
 
 
+def _blocks_to_dicts(content) -> list:
+    """Convert SDK content block objects to plain dicts for message history.
+
+    The Anthropic SDK returns Pydantic model instances. Passing them back
+    directly can fail serialization in some SDK versions; converting to dicts
+    first is always safe.
+    """
+    result = []
+    for block in content:
+        if block.type == "text":
+            result.append({"type": "text", "text": block.text})
+        elif block.type == "tool_use":
+            result.append({
+                "type": "tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            })
+    return result
+
+
 def _run(user_query: str) -> tuple:
     """
     Core agentic loop. Returns (response_text, songs_list).
@@ -153,7 +174,9 @@ def _run(user_query: str) -> tuple:
             top_score = captured_songs[0]["confidence_score"] if captured_songs else "N/A"
             logger.info("Tool returned %d results, top score: %s", len(captured_songs), top_score)
 
-            messages.append({"role": "assistant", "content": response.content})
+            # Use plain dicts — Pydantic objects from response.content can fail
+            # serialization when passed back into the API in some SDK versions.
+            messages.append({"role": "assistant", "content": _blocks_to_dicts(response.content)})
             messages.append({
                 "role": "user",
                 "content": [{
