@@ -30,16 +30,65 @@ if not os.getenv("ANTHROPIC_API_KEY"):
     )
     st.stop()
 
-from agent import run_agent_full  # noqa: E402 — import after path setup
+from agent import run_agent_full        # noqa: E402
+from profiles import load_profile, upsert_profile  # noqa: E402
 
 # ── Session state init ────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []
 if "pending_query" not in st.session_state:
     st.session_state.pending_query = ""
+if "username" not in st.session_state:
+    st.session_state.username = ""
+if "profile_cache" not in st.session_state:
+    st.session_state.profile_cache = None
 
 MIN_QUERY_LEN = 3
 MAX_QUERY_LEN = 500
+
+# ── Sidebar — user profile ────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Your Profile")
+
+    raw_name = st.text_input(
+        "Name",
+        value=st.session_state.username,
+        placeholder="Enter your name to save history...",
+        max_chars=50,
+    ).strip()
+
+    # Refresh cached profile when the name changes
+    if raw_name != st.session_state.username:
+        st.session_state.username = raw_name
+        st.session_state.profile_cache = load_profile(raw_name) if raw_name else None
+
+    username = st.session_state.username
+    profile  = st.session_state.profile_cache
+
+    if username:
+        if profile:
+            st.success(f"Welcome back, **{username}**!")
+            c1, c2 = st.columns(2)
+            c1.metric("Searches",  profile["query_count"])
+            c2.metric("Top Genre", profile["top_genre"] or "—")
+            st.caption(f"Favourite mood: **{profile['top_mood'] or '—'}**")
+            st.caption(f"Member since: {profile['first_seen'][:10]}")
+
+            if profile["history"]:
+                with st.expander("Recent searches", expanded=False):
+                    for entry in reversed(profile["history"][-10:]):
+                        ts = entry.get("timestamp", "")[:10]
+                        st.markdown(
+                            f"- `{ts}` &nbsp; {entry['query']}"
+                            + (f" *(_{entry['genre']}_)*" if entry.get("genre") else "")
+                        )
+        else:
+            st.info(f"Hi **{username}**! Your profile will be created on your first search.")
+    else:
+        st.caption("Enter a name to save your preferences and search history across sessions.")
+
+    st.divider()
+    st.caption("Profiles are stored locally in `data/user_profiles.csv`.")
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🎵 AI Music Recommender")
@@ -48,7 +97,7 @@ col_header.markdown(
     "Describe what you want to listen to — Claude searches **10,020 songs** "
     "and explains every pick."
 )
-if col_clear.button("Clear", help="Clear search history"):
+if col_clear.button("Clear", help="Clear this session's search history"):
     st.session_state.history = []
     st.rerun()
 st.divider()
@@ -81,7 +130,6 @@ if submitted and user_input.strip():
     query_to_run = user_input.strip()
     st.session_state.pending_query = ""
 elif st.session_state.pending_query and not submitted:
-    # Example button was clicked — auto-run on next render after state is set
     query_to_run = st.session_state.pending_query
     st.session_state.pending_query = ""
 
@@ -96,10 +144,16 @@ if query_to_run:
             try:
                 result = run_agent_full(query_to_run)
                 st.session_state.history.insert(0, {
-                    "query": query_to_run,
+                    "query":    query_to_run,
                     "response": result["response"],
-                    "songs": result["songs"],
+                    "songs":    result["songs"],
                 })
+
+                # Persist to user_profiles.csv if user gave their name
+                if username and result["songs"]:
+                    updated = upsert_profile(username, query_to_run, result["songs"])
+                    st.session_state.profile_cache = updated
+
             except EnvironmentError as e:
                 st.error(str(e))
             except RuntimeError as e:
@@ -131,7 +185,6 @@ for idx, entry in enumerate(st.session_state.history):
                     )
                 with right:
                     st.metric(label="Score", value=f"{song['confidence_score']:.2f}")
-                # Clamp to [0.0, 1.0] — st.progress crashes on out-of-range values
                 safe_score = max(0.0, min(1.0, float(song["confidence_score"])))
                 st.progress(safe_score)
                 with st.expander("Why this song?"):
