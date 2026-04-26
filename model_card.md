@@ -1,102 +1,145 @@
-# 🎧 Model Card: Music Recommender Simulation
+# Model Card: AI Music Recommender
 
-## 1. Model Name  
-
-**MoodMatch 1.0**
-
----
-
-## 2. Intended Use  
-
-MoodMatch 1.0 suggests the top 5 songs from a small catalog that best match a user's stated taste. You tell it your preferred genre, mood, energy level, and how acoustic you like your music, and it scores every song in the catalog to find your closest matches.
-
-It assumes the user already knows what they want and can express it in simple terms like "I want chill lofi with low energy." It does not learn from listening history, it does not ask follow-up questions, and it does not know anything about lyrics or cultural context.
-
-This is a classroom exploration tool, not a real product. It is designed to demonstrate how content-based filtering works and to make the scoring logic visible and explainable, not to serve real users at scale.
+**Author:** Mustafa Bouchaqour  
+**Model name:** AI Music Recommender  
+**Version:** 2.0 (evolved from MoodMatch 1.0 — rule-based CLI)  
+**Last updated:** April 2026
 
 ---
 
-## 3. How the Model Works  
+## 1. How I Collaborated with AI in This Project
 
-Imagine you are a music store clerk and a customer walks in and says: "I want something lofi, chill, calm, and acoustic." You then walk through every album in the store and give each one a score based on how well it matches that description. The album with the highest score is your top recommendation.
+This project used AI in two distinct ways — as a component inside the system, and as a collaborator during development.
 
-That is exactly what MoodMatch 1.0 does.
+**AI inside the system (Claude Haiku as the agent)**  
+The core of the app is an agentic loop where Claude Haiku interprets a user's natural language request and decides what parameters to pass to the `search_songs` tool. Claude never picks the songs directly — it translates words like "something calm for studying" into structured numeric parameters (genre, mood, energy targets), and the deterministic scoring engine does the rest. This separation was intentional: Claude handles language, code handles logic. Every recommendation is fully auditable because the score comes from a formula, not from what the model "thinks" sounds good.
 
-Each song in the catalog has six measured properties: genre, mood, energy level, how acoustic it sounds, its emotional positivity (valence), and how danceable it is. The user provides the same six preferences. The system compares the two side by side for every song and adds up a score.
+**AI as a development collaborator (Claude as assistant)**  
+Throughout the build I worked with Claude Code to design and implement each layer. The collaboration was iterative: I described what I wanted, Claude proposed an approach, I either approved or redirected it, and then we built it together. Some specific moments where the collaboration shaped the final design:
 
-Genre and mood are the biggest factors. If a song's genre matches exactly, it gets a large bonus. Same for mood. These two signals together represent more than 40% of the maximum possible score, because genre and mood are the clearest expressions of what a listener actually wants.
+- When implementing the tool schema, Claude suggested adding `target_valence` and `target_danceability` as optional parameters. I hadn't included them in my original plan, but they turned out to be important — a user asking for "something happy and danceable" now maps to distinct numeric targets rather than just a genre label.
+- When expanding the song catalog, I described the goal (10,000 new songs with realistic per-genre parameters) and Claude wrote `expand_songs.py`. I reviewed the genre parameter ranges and word banks before running it — collaborative authorship, not blind delegation.
+- When we hit the `400 Bad Request` API error (tool_use IDs without matching tool_result blocks), Claude diagnosed the root cause — the Anthropic SDK returns Pydantic model instances that fail serialization when passed back to the API — and added the `_blocks_to_dicts()` conversion. I wouldn't have found that without it.
+- The authentication module was designed collaboratively: I specified the security requirements (PBKDF2, constant-time comparison, lockout), Claude implemented them, and I reviewed the code for correctness before accepting it.
 
-The remaining score comes from how close the song's numbers are to the user's targets. A song with energy=0.35 scores higher for a user who asked for energy=0.38 than a song with energy=0.90. The closer the number, the more points it earns. Acousticness and energy are weighted the most among the numeric features since they most strongly define a listening experience. Valence and danceability are tiebreakers — they barely change the ranking on their own.
-
-All the points are added up and divided by the maximum possible score to produce a final number between 0 and 1. The top 5 songs with the highest scores are returned, along with an explanation of exactly which features contributed.
-
-The main change from the starter logic was adding acousticness, valence, and danceability as scored features, expanding the catalog from 10 to 20 songs, and building a visual score bar in the output so the rankings are easy to read at a glance.
-
----
-
-## 4. Data  
-
-The catalog has 20 songs stored in `data/songs.csv`. The original starter project came with 10 songs. I expanded it to 20 to cover a wider range of genres and moods and make the recommender more interesting to test.
-
-The 20 songs span 17 genres: lofi, pop, rock, ambient, jazz, synthwave, hip-hop, blues, classical, edm, country, r&b, metal, reggae, dream pop, soul, and indie pop. The moods covered include: chill, happy, intense, relaxed, focused, moody, confident, melancholic, peaceful, euphoric, nostalgic, romantic, angry, and joyful.
-
-However, the distribution is uneven. Most genres have exactly one song. Lofi is the only genre with three songs, which gives lofi listeners a clear advantage — they get better, more competitive results than listeners of genres like metal, blues, or classical, where there is only one song to match against.
-
-The dataset also reflects a particular kind of listener. It leans toward Western popular music styles and does not include genres like K-pop, Afrobeats, flamenco, or traditional folk music. There are no songs in languages other than English. This means the system would not serve listeners outside of these musical traditions at all.
+The most important thing I learned about AI collaboration is that it works best when you stay in the driver's seat. Every time I approved code without fully understanding it, I had to come back and debug it later. Every time I understood what was being built and asked targeted questions, the result was better.
 
 ---
 
-## 5. Strengths  
+## 2. Biases in the Recommendation System
 
-The system works best for users who have a clear, well-represented taste. The **Chill Lofi** profile is the strongest example. That listener got three songs that genuinely matched their genre and mood in the top 3, with scores above 0.79. The recommendations felt right — quiet, acoustic, low-energy tracks that a late-night study session listener would actually enjoy.
+**Genre filter bubble**  
+Genre carries the highest weight in the scoring formula (+2.0 out of a maximum 8.0 raw score). When a requested genre has few songs in the catalog, the system runs out of good matches and falls back to songs that score well on numeric features alone. A user requesting `reggae` gets one genuine match and then receives hip-hop or pop songs that simply happened to have similar energy values. The user never sees this failure — the results look confident even when they aren't.
 
-The scoring logic also does a good job separating very different profiles from each other. When I ran Chill Lofi and High-Energy Pop side by side, the results shared zero songs in common. The system correctly understood that "calm and acoustic" and "loud and danceable" are opposite asks, and it ranked songs accordingly.
+**Binary categorical matching**  
+Genre and mood are scored as exact string matches. `chill` and `relaxed` are treated as completely different, even though most listeners would consider them nearly identical. `lofi` and `ambient` have no shared score credit despite being semantically close. This means users who describe their taste slightly differently from the catalog's vocabulary get structurally worse results.
 
-Another strength is transparency. Every recommendation comes with a "Why?" breakdown showing exactly which features contributed to the score and by how much. This is something real apps like Spotify do not show you. A user can look at the output and immediately understand why a song ranked where it did, which makes the system easy to debug and easy to learn from.
+**Catalog imbalance**  
+Even at 10,020 songs, the distribution across 17 genres is not uniform. Genres like `pop`, `lofi`, and `rock` have many more entries than `blues`, `reggae`, or `soul`. A listener in a well-represented genre consistently gets better, more competitive recommendations than one in a sparse genre — not because the algorithm treats them differently, but because the data does.
 
-Finally, the visual score bar makes the confidence level of each recommendation obvious at a glance. A score of 0.97 with a nearly full bar tells you the system is very confident. A score of 0.48 with a half-empty bar tells you it ran out of good matches. That honesty about uncertainty is a real strength for a teaching tool.
+**Western-music default**  
+The catalog was generated from word banks that reflect Western popular music styles. There are no entries for K-pop, Afrobeats, flamenco, cumbia, or other global genres. The system would be useless for a large portion of the world's music listeners.
 
----
+**Numeric proximity override**  
+A song can "trick" the scoring formula by matching all six numeric targets closely while being from a completely wrong genre or mood. In testing, `Gym Hero` (pop, intense) ranked second for a rock listener because its energy=0.93 closely matched the rock profile's target — even though the genre and mood were wrong. This is a fundamental limitation of content-based filtering: numbers can match without the listening experience matching.
 
-## 6. Limitations and Bias 
-
-The most significant weakness I discovered is that the system creates a **genre filter bubble** for underrepresented genres. Because genre carries the highest weight (+2.0 out of a maximum of 8.0), a user requesting `rock` gets one strong match — `Storm Runner` — and then the system has nowhere to go, falling back to songs like `hip-hop` and `synthwave` that share no genre or mood with the request. This means roughly 75% of the top-5 results for a rock listener are structurally irrelevant, not because the scoring logic failed, but because the catalog only contains one rock song. In a real product, this would silently frustrate an entire category of users who would see low-quality recommendations and never know why. A fairer system would either balance the catalog to have equal genre representation, or detect when a genre is sparse and widen the search to semantically similar genres rather than defaulting to numeric-only scoring.
-
----
-
-## 7. Evaluation  
-
-I tested three distinct user profiles by running the CLI and reading the ranked top-5 output for each: a **Chill Lofi** listener (low energy, acoustic, chill mood), a **High-Energy Pop** listener (high energy, danceability, happy mood), and a **Deep Intense Rock** listener (high energy, low acousticness, intense mood). For each profile I checked whether the top result made intuitive sense, whether the score bar reflected a real quality gap between ranks, and whether the "Why?" explanations matched the formula weights.
-
-The result that surprised me most was in the **Chill Lofi** profile — `Library Rain` and `Midnight Coding` both scored 0.97 and were nearly impossible to separate, even though they are different songs by different artists. This revealed that when genre and mood both match perfectly and the numeric features are close, the system cannot meaningfully differentiate between candidates and the final ranking becomes almost arbitrary. I also did not expect `Velvet Underground` (soul, melancholic) to appear in the Chill Lofi top 5 at all — it has no genre or mood match, but its numeric features (energy=0.44, acousticness=0.67) are close enough to the lofi targets that it outranks songs from more fitting genres, exposing how numeric proximity can override semantic fit when a genre is underrepresented.
+**Profile personalization cold start**  
+A new registered user gets the same recommendations as a guest for their first query. Personalization only activates after sufficient history builds up. First impressions may not reflect what the system can eventually deliver.
 
 ---
 
-## 8. Future Work  
+## 3. Testing Results and Edge Cases Discovered
 
-First, I would expand the catalog. Right now most genres only have one song. If you ask for rock, the system runs out of good matches almost immediately. More songs per genre would fix that.
+**Final result: 70 / 70 tests passing**
 
-Second, I would group similar genres and moods together. Right now `chill` and `relaxed` are treated as completely different. But they feel almost the same. Grouping them would help users who describe their taste slightly differently still get good results.
+| File | Tests | Focus |
+|---|---|---|
+| `test_recommender.py` | 6 | Scoring engine correctness: OOP `Recommender`, `score_song` weights, `recommend_songs` output shape, `load_songs` integrity |
+| `test_auth.py` | 32 | Full authentication lifecycle: validation, account creation, login, lockout, case-insensitive lookup, failure counter reset |
+| `test_agent_tools.py` | 32 | Agent internals under adversarial inputs across 5 categories |
 
-Third, I would add a diversity rule. Right now the top 5 can all be from the same genre. That gets repetitive fast. A simple rule like "no more than 2 songs from the same genre in the top 5" would make results feel more interesting.
+**Interesting discoveries from the test suite:**
 
-Fourth, I would let the profile update over time. If a user skips a song, that should mean something. Right now the system ignores all feedback. Even a simple "thumbs down lowers that genre's weight" would make it feel smarter.
+*Lockout counter resets on success (test_auth.py)*  
+After writing the lockout test, I realized I hadn't explicitly verified that a successful login resets the failed-attempt counter. I added `test_authenticate_failed_attempts_reset_on_success`, which confirmed the reset works — but this was a gap in the original spec that I caught only by thinking through the edge case.
 
-Finally, I would add a warning when a genre is sparse. Instead of quietly handing back unrelated songs, the system should say "we only found 1 rock song — here are some similar-sounding alternatives." Honesty about limitations is better than silent bad recommendations.
+*Numeric genre coercion (test_agent_tools.py)*  
+`_execute_search_songs({"genre": 42}, songs)` — passing an integer as the genre. The code does `str(tool_input.get("genre", "")).strip().lower()`, which converts 42 to `"42"`, a valid non-matching string, without crashing. The test documents this implicit behavior rather than leaving it as an assumption.
+
+*`k=0` clamping (test_agent_tools.py)*  
+Requesting zero results is clamped to 1 by `max(1, min(20, int(k)))`. Without the test, someone could read that line and miss that k=0 silently becomes k=1 rather than returning an empty list.
+
+*Empty history gives base prompt, not crash (test_agent_tools.py)*  
+`_build_system_prompt({"history": []})` returns the base prompt unchanged. This is the correct behavior for a new user, but without a test it was easy to imagine a future change accidentally treating an empty list as a falsy condition and inserting a blank personalization block into every prompt.
+
+*Special characters don't escape into the system prompt (test_agent_tools.py)*  
+I tested a profile history containing `<script>alert('xss')</script>` and `'; DROP TABLE users; --` as past queries. Because these strings are just interpolated into a text system prompt (not executed as HTML or SQL), they are inert. The test confirms no crash and the strings appear verbatim as plain text — which is the correct behavior, since the prompt goes to a language model that treats it as text.
+
+*Score tie at perfect match (discovered during manual testing)*  
+Two songs that both perfectly match genre and mood and have nearly identical numeric features end up with scores of 0.97 and the ranking between them becomes effectively arbitrary. This isn't a bug — it's a documented limitation of the scoring formula when the catalog has multiple very similar entries.
 
 ---
 
-## 9. Personal Reflection  
+## 4. Limitations of the Current System
 
-**Chill Lofi vs. High-Energy Pop**
+**Single-writer CSV storage**  
+The authentication and profile files use a read-all → update-in-memory → write-all pattern. This is safe for a single user at a time but would corrupt data under concurrent writes. It is not suitable for production use with multiple simultaneous users.
 
-These two profiles are opposites in almost every way — one wants quiet, acoustic, low-energy music to focus, and the other wants loud, danceable, upbeat music to hype up. When I ran both, the top results were completely different, which is what you'd expect. What was interesting is *why* they diverged: the lofi profile rewarded songs that felt "soft" on every dial (low energy, high acousticness, calm mood), while the pop profile rewarded songs that were loud and danceable. The system correctly pulled them apart — but only because the catalog happened to have songs that matched each extreme cleanly. If the catalog were smaller or more uniform, both profiles would have gotten the same recommendations, which would be a sign the system had stopped working.
+**No semantic understanding in the scoring engine**  
+The scoring engine compares raw numeric features and exact string labels. It has no awareness that `lofi` and `ambient` are sonically similar, that `melancholic` and `sad` describe the same feeling, or that a user asking for "background music" likely wants low energy and high acousticness. All of that semantic translation burden falls entirely on Claude.
 
-**Chill Lofi vs. Deep Intense Rock**
+**Session state is not persistent**  
+A browser refresh clears the Streamlit session, including the chat history shown in the UI. The persisted profile (in `user_profiles.csv`) is reloaded, but the visible conversation history in the current tab is lost. This is a Streamlit limitation.
 
-Both profiles want a specific genre and mood, but lofi has 3 songs in the catalog while rock only has 1. This is where the system behaved most differently. The lofi profile got a confident, well-matched top 3. The rock profile got one great match at #1 and then basically gave up — it started recommending hip-hop and synthwave songs just because their energy numbers happened to be high. In plain terms: the system ran out of rock songs to recommend, but instead of telling you that, it quietly handed you unrelated music. It's like asking a store for apples and, when they run out, being handed oranges because they're also round.
+**Profile personalization is coarse**  
+The personalization context injected into the system prompt is a summary: top genre, top mood, and the text of the last 5 queries. It does not include actual songs the user liked, songs they skipped, or the scores those songs received. The system knows what the user asked for but not what they thought of the answer.
 
-**High-Energy Pop vs. Deep Intense Rock**
+**No feedback loop**  
+There is no mechanism for a user to rate a recommendation. Clicking away from a song, replaying it, or explicitly thumbing it down has no effect on future results. Recommendations improve only by inferring taste from the genre and mood of songs returned by past queries — a very indirect signal.
 
-Both profiles want high energy, but pop wants "happy" and rock wants "intense." You would think these are very different vibes — and a human DJ would treat them completely differently. But the system kept recommending `Gym Hero` (pop, intense) to the rock profile as the #2 pick. Why? Because `Gym Hero` has energy=0.93, which is almost identical to what the rock profile asked for, and the mood bonus for "intense" fired. The genre was wrong (pop, not rock), but the numbers were too close to ignore. This is a good example of a song "tricking" the system by matching the numeric signals without matching the actual vibe — exactly the kind of case where a content-based recommender breaks down and human taste judgment would do better.
+**Agent temperature and non-determinism**  
+Claude's responses to the same query will vary between runs. The song selection is deterministic (it comes from the scoring engine), but the conversational text, the phrasing of explanations, and occasionally the parameters Claude chooses to pass to `search_songs` will differ. This makes the system harder to unit-test at the integration level.
 
+**CSV credentials file is not production-safe**  
+Passwords are hashed correctly (PBKDF2-HMAC-SHA256, 260,000 iterations, per-user salt, constant-time comparison), but storing credentials in a flat CSV file means anyone with filesystem access can read all usernames, inspect the lockout state, and potentially launch offline attacks against the hashes. A proper database with access control is necessary for any real deployment.
+
+---
+
+## 5. What I Would Improve with More Time
+
+**Semantic genre and mood grouping**  
+I would build a similarity graph for genres and moods — `lofi` is close to `ambient` and `chillwave`; `melancholic` is close to `sad` and `nostalgic`. When a requested genre has fewer than three songs, the scoring engine would automatically widen the search to neighbors in the graph. This would eliminate the "ran out of matches" problem without requiring a larger catalog.
+
+**Explicit user feedback**  
+A thumbs up / thumbs down button on each result card. Thumbs down lowers the weight of that genre and mood in future profile-based personalization; thumbs up raises it. This turns the profile from a passive history log into an active preference model.
+
+**Profile-aware re-ranking**  
+Currently the profile biases the Claude system prompt, which then influences the `search_songs` parameters. A more direct approach would be to run the scoring engine with the user's profile weights directly — so a user who has historically loved high-acousticness songs gets a small acousticness bonus applied at the scoring layer, not just at the language interpretation layer.
+
+**Streaming responses**  
+Claude's response currently appears all at once after the full API call completes. Streaming the response token-by-token (using `client.messages.stream()`) would make the UI feel much more responsive, especially for longer explanations.
+
+**Catalog diversity and global music**  
+Expanding the catalog to include non-Western genres and adding language as a filterable field. A user who wants music in Spanish, or specifically wants Afrobeats, should be able to say so and get meaningful results.
+
+**Replace CSV storage with a proper database**  
+SQLite would be the minimal improvement — zero infrastructure, file-based like CSV, but with proper transactions, concurrent-read safety, and SQL querying. A real deployment would use PostgreSQL with row-level security.
+
+**Integration tests for the agent loop**  
+The current test suite covers components in isolation. I would add integration tests that mock the Anthropic API response (returning a known `tool_use` block) and verify that the full `run_agent_full()` loop produces the expected structured output — catching regressions that only appear when all layers interact.
+
+---
+
+## 6. Scoring Formula Reference
+
+| Feature | Weight | Maximum contribution |
+|---|---|---|
+| Genre match (exact) | +2.0 | 2.0 |
+| Mood match (exact) | +1.5 | 1.5 |
+| Energy proximity | ×1.5 | 1.5 |
+| Acousticness proximity | ×1.5 | 1.5 |
+| Valence proximity | ×1.0 | 1.0 |
+| Danceability proximity | ×0.5 | 0.5 |
+| **Maximum raw score** | | **8.0** |
+
+Final score = raw score ÷ 8.0, normalized to [0.0, 1.0].
