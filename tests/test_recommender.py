@@ -94,10 +94,9 @@ def test_recommend_songs_returns_k_results():
 # ── load_songs tests ──────────────────────────────────────────────────────────
 
 def test_load_songs_returns_correct_count():
-    """CSV catalog should load exactly 20 songs with the expected fields."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """CSV catalog should load all songs with the expected fields and types."""
     songs = load_songs("data/songs.csv")
-    assert len(songs) == 20
+    assert len(songs) == 10_020
     assert "title" in songs[0]
     assert "energy" in songs[0]
     assert isinstance(songs[0]["energy"], float)

@@ -82,33 +82,44 @@ SEARCH_SONGS_TOOL = {
     },
 }
 
-SYSTEM_PROMPT = """You are a music recommendation assistant. When a user describes what they want to listen to, you MUST call the search_songs tool before responding.
+SYSTEM_PROMPT = """You are a music recommendation assistant. Only answer music-related requests.
 
-If the user mentions a real artist or song (e.g. "like Nirvana", "similar to Clair de Lune"), translate their style into the catalog's parameters before calling the tool:
+If the user asks about something unrelated to music (coding, math, weather, personal advice, general knowledge, etc.), do NOT call the search_songs tool. Instead respond: "I can only help with music recommendations. What kind of music are you looking for?"
+
+If the user asks for something harmful or inappropriate, politely decline without calling the tool.
+
+For all valid music requests, you MUST call the search_songs tool before responding. All numeric parameters must be between 0.0 and 1.0.
+
+If the user mentions a real artist or song, translate their style before calling the tool:
 - Nirvana → genre: rock, mood: intense, target_energy: 0.88, target_acousticness: 0.10
 - Pink Floyd → genre: rock, mood: moody, target_energy: 0.60, target_acousticness: 0.25
 - Bach / classical composers → genre: classical, mood: peaceful, target_energy: 0.25
 - Drake / hip-hop artists → genre: hip-hop, mood: confident, target_energy: 0.75
 - The Weeknd / R&B artists → genre: r&b, mood: moody, target_energy: 0.65
-Use your knowledge of the artist's style to pick the closest genre and mood from the available lists.
+Use your knowledge of the artist's style to pick the closest genre and mood from the lists below.
 
-After receiving tool results, present recommendations in a friendly, conversational way. For each song mention the title, artist, and one sentence on why it fits. End with a brief confidence note.
+After receiving tool results, present recommendations conversationally. For each song mention title, artist, and one sentence on why it fits. End with a brief confidence note.
 
 Available genres: lofi, pop, rock, ambient, jazz, synthwave, hip-hop, blues, classical, edm, country, r&b, metal, reggae, dream pop, soul, indie pop
 Available moods: chill, happy, intense, relaxed, focused, moody, confident, melancholic, peaceful, euphoric, nostalgic, romantic, angry, joyful"""
 
 
+def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, float(value)))
+
+
 def _execute_search_songs(tool_input: dict, songs: list) -> list:
     """Run the scoring engine with the parameters Claude chose."""
     user_prefs = {
-        "genre": tool_input.get("genre", ""),
-        "mood": tool_input.get("mood", ""),
-        "target_energy": tool_input.get("target_energy", 0.5),
-        "target_acousticness": tool_input.get("target_acousticness", 0.5),
-        "target_valence": tool_input.get("target_valence", 0.5),
-        "target_danceability": tool_input.get("target_danceability", 0.5),
+        "genre": str(tool_input.get("genre", "")).strip().lower(),
+        "mood":  str(tool_input.get("mood",  "")).strip().lower(),
+        "target_energy":       _clamp(tool_input.get("target_energy",       0.5)),
+        "target_acousticness": _clamp(tool_input.get("target_acousticness", 0.5)),
+        "target_valence":      _clamp(tool_input.get("target_valence",      0.5)),
+        "target_danceability": _clamp(tool_input.get("target_danceability", 0.5)),
     }
-    k = tool_input.get("k", 5)
+    # Clamp k to a safe range so Claude can't request 0 or 10000 results
+    k = max(1, min(20, int(tool_input.get("k", 5))))
     results = recommend_songs(user_prefs, songs, k=k)
     return [
         {
@@ -164,13 +175,24 @@ def _run(user_query: str) -> tuple:
 
     while True:
         logger.info("Sending request to Claude...")
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
-            tools=[SEARCH_SONGS_TOOL],
-            messages=messages,
-        )
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                tools=[SEARCH_SONGS_TOOL],
+                messages=messages,
+            )
+        except anthropic.AuthenticationError:
+            raise RuntimeError("Invalid API key. Check your ANTHROPIC_API_KEY in .env.")
+        except anthropic.RateLimitError:
+            raise RuntimeError("Rate limit reached. Please wait 30 seconds and try again.")
+        except anthropic.APITimeoutError:
+            raise RuntimeError("Request timed out. Please try again.")
+        except anthropic.APIConnectionError:
+            raise RuntimeError("Could not connect to the API. Check your internet connection.")
+        except anthropic.BadRequestError as e:
+            raise RuntimeError(f"Bad request: {e}")
 
         logger.info("Claude stop_reason: %s", response.stop_reason)
 
@@ -199,6 +221,8 @@ def _run(user_query: str) -> tuple:
                 (b.text for b in response.content if hasattr(b, "text")),
                 "Sorry, I couldn't generate a recommendation.",
             )
+            if not captured_songs:
+                logger.warning("Agent returned end_turn without calling search_songs.")
             logger.info("Agent completed successfully.")
             return final_text, captured_songs
 

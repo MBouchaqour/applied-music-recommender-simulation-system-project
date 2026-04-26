@@ -80,28 +80,45 @@ def load_songs(csv_path: str) -> List[Dict]:
     Loads songs from a CSV file.
     Accepts either an absolute path or a path relative to the project root.
     """
+    import warnings
+
     if os.path.isabs(csv_path):
         full_path = csv_path
     else:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         full_path = os.path.join(base_dir, csv_path)
 
+    if not os.path.exists(full_path):
+        raise FileNotFoundError(
+            f"Song catalog not found at '{full_path}'. "
+            "Make sure 'data/songs.csv' exists in the project root."
+        )
+
     songs = []
+    skipped = 0
     with open(full_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            songs.append({
-                "id":           int(row["id"]),
-                "title":        row["title"],
-                "artist":       row["artist"],
-                "genre":        row["genre"],
-                "mood":         row["mood"],
-                "energy":       float(row["energy"]),
-                "tempo_bpm":    float(row["tempo_bpm"]),
-                "valence":      float(row["valence"]),
-                "danceability": float(row["danceability"]),
-                "acousticness": float(row["acousticness"]),
-            })
+            try:
+                songs.append({
+                    "id":           int(row["id"]),
+                    "title":        row["title"],
+                    "artist":       row["artist"],
+                    "genre":        row["genre"],
+                    "mood":         row["mood"],
+                    "energy":       float(row["energy"]),
+                    "tempo_bpm":    float(row["tempo_bpm"]),
+                    "valence":      float(row["valence"]),
+                    "danceability": float(row["danceability"]),
+                    "acousticness": float(row["acousticness"]),
+                })
+            except (ValueError, KeyError):
+                skipped += 1
+
+    if skipped:
+        warnings.warn(f"Skipped {skipped} malformed rows in {csv_path}.")
+    if not songs:
+        raise ValueError(f"No valid songs loaded from '{full_path}'. Check the CSV format.")
 
     print(f"Loaded {len(songs)} songs from {csv_path}")
     return songs
@@ -121,23 +138,24 @@ def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
         reasons.append(f"mood match ({song['mood']}) (+1.5)")
 
     # ── Numeric proximity (1 − distance, weighted) ─────────────────────────
+    # max(0, ...) prevents negative contributions when targets are out of [0,1].
     # energy — strong conviction feature (weight 1.5, max contribution 1.5)
-    energy_sim = (1 - abs(song["energy"] - user_prefs.get("target_energy", 0.5))) * 1.5
+    energy_sim = max(0.0, 1 - abs(song["energy"] - user_prefs.get("target_energy", 0.5))) * 1.5
     raw_score += energy_sim
     reasons.append(f"energy similarity {energy_sim:.2f}/1.50")
 
     # acousticness — strong conviction feature (weight 1.5, max contribution 1.5)
-    acoustic_sim = (1 - abs(song["acousticness"] - user_prefs.get("target_acousticness", 0.5))) * 1.5
+    acoustic_sim = max(0.0, 1 - abs(song["acousticness"] - user_prefs.get("target_acousticness", 0.5))) * 1.5
     raw_score += acoustic_sim
     reasons.append(f"acousticness similarity {acoustic_sim:.2f}/1.50")
 
     # valence — tiebreaker (weight 1.0, max contribution 1.0)
-    valence_sim = (1 - abs(song["valence"] - user_prefs.get("target_valence", 0.5))) * 1.0
+    valence_sim = max(0.0, 1 - abs(song["valence"] - user_prefs.get("target_valence", 0.5))) * 1.0
     raw_score += valence_sim
     reasons.append(f"valence similarity {valence_sim:.2f}/1.00")
 
     # danceability — weakest signal (weight 0.5, max contribution 0.5)
-    dance_sim = (1 - abs(song["danceability"] - user_prefs.get("target_danceability", 0.5))) * 0.5
+    dance_sim = max(0.0, 1 - abs(song["danceability"] - user_prefs.get("target_danceability", 0.5))) * 0.5
     raw_score += dance_sim
     reasons.append(f"danceability similarity {dance_sim:.2f}/0.50")
 

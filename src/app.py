@@ -38,12 +38,19 @@ if "history" not in st.session_state:
 if "pending_query" not in st.session_state:
     st.session_state.pending_query = ""
 
+MIN_QUERY_LEN = 3
+MAX_QUERY_LEN = 500
+
 # ── Header ────────────────────────────────────────────────────────────────────
 st.title("🎵 AI Music Recommender")
-st.markdown(
+col_header, col_clear = st.columns([5, 1])
+col_header.markdown(
     "Describe what you want to listen to — Claude searches **10,020 songs** "
     "and explains every pick."
 )
+if col_clear.button("Clear", help="Clear search history"):
+    st.session_state.history = []
+    st.rerun()
 st.divider()
 
 # ── Example query buttons ─────────────────────────────────────────────────────
@@ -80,18 +87,25 @@ elif st.session_state.pending_query and not submitted:
 
 # ── Run the agent ─────────────────────────────────────────────────────────────
 if query_to_run:
-    with st.spinner("Searching the catalog..."):
-        try:
-            result = run_agent_full(query_to_run)
-            st.session_state.history.insert(0, {
-                "query": query_to_run,
-                "response": result["response"],
-                "songs": result["songs"],
-            })
-        except EnvironmentError as e:
-            st.error(str(e))
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
+    if len(query_to_run) < MIN_QUERY_LEN:
+        st.warning(f"Please enter at least {MIN_QUERY_LEN} characters.")
+    elif len(query_to_run) > MAX_QUERY_LEN:
+        st.warning(f"Query too long — please keep it under {MAX_QUERY_LEN} characters.")
+    else:
+        with st.spinner("Searching the catalog..."):
+            try:
+                result = run_agent_full(query_to_run)
+                st.session_state.history.insert(0, {
+                    "query": query_to_run,
+                    "response": result["response"],
+                    "songs": result["songs"],
+                })
+            except EnvironmentError as e:
+                st.error(str(e))
+            except RuntimeError as e:
+                st.warning(str(e))
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
 
 # ── Results ───────────────────────────────────────────────────────────────────
 for idx, entry in enumerate(st.session_state.history):
@@ -117,10 +131,14 @@ for idx, entry in enumerate(st.session_state.history):
                     )
                 with right:
                     st.metric(label="Score", value=f"{song['confidence_score']:.2f}")
-                st.progress(float(song["confidence_score"]))
+                # Clamp to [0.0, 1.0] — st.progress crashes on out-of-range values
+                safe_score = max(0.0, min(1.0, float(song["confidence_score"])))
+                st.progress(safe_score)
                 with st.expander("Why this song?"):
                     for reason in song["why"].split(" | "):
                         st.write(f"• {reason}")
+    elif not entry["songs"] and entry["response"]:
+        st.info("No catalog matches found for this request. Try a different genre or mood.")
 
 # ── Empty state ───────────────────────────────────────────────────────────────
 if not st.session_state.history:
