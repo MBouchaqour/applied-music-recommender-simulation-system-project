@@ -4,6 +4,14 @@ A conversational music discovery web app that lets users describe what they want
 
 ---
 
+## Demo Walkthrough
+
+Watch the full end-to-end demo — authentication flow, 3 example queries, confidence scores, and personalization in action:
+
+[![Watch the demo](https://cdn.loom.com/sessions/thumbnails/87ff446f71fb4a6a9b830b80cd076793-with-play.gif)](https://www.loom.com/share/87ff446f71fb4a6a9b830b80cd076793)
+
+---
+
 ## Base Project
 
 This system evolved from a rule-based CLI music recommender built in Modules 3. The original project took a hardcoded `UserProfile` dataclass (genre, mood, energy targets) and scored 20 songs using a weighted formula, returning the top matches with score breakdowns at the terminal.
