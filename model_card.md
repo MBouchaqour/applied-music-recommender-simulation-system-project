@@ -1,6 +1,6 @@
 # Model Card: AI Music Recommender
 
-**Author:** Mustafa Bouchaqour  
+**Author:** Mustapha Bouchaqour  
 **Model name:** AI Music Recommender  
 **Version:** 2.0 (evolved from MoodMatch 1.0 — rule-based CLI)  
 **Last updated:** April 2026

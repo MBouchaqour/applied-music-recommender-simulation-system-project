@@ -1,4 +1,4 @@
-# AI Music Recommender — Powered by Claude
+# AI Music Recommender — To Next Level
 
 A conversational music discovery web app that lets users describe what they want to hear in plain English and receive personalized, explainable recommendations from a catalog of 10,020 songs — backed by a deterministic scoring engine and the Claude Haiku API.
 
@@ -6,7 +6,7 @@ A conversational music discovery web app that lets users describe what they want
 
 ## Base Project
 
-This system evolved from a rule-based CLI music recommender built in Modules 1–3. The original project took a hardcoded `UserProfile` dataclass (genre, mood, energy targets) and scored 20 songs using a weighted formula, returning the top matches with score breakdowns at the terminal.
+This system evolved from a rule-based CLI music recommender built in Modules 3. The original project took a hardcoded `UserProfile` dataclass (genre, mood, energy targets) and scored 20 songs using a weighted formula, returning the top matches with score breakdowns at the terminal.
 
 **What changed across each evolution:**
 
