@@ -40,21 +40,51 @@ class Recommender:
         self.songs = songs
 
     def recommend(self, user: UserProfile, k: int = 5) -> List[Song]:
-        # TODO: Implement recommendation logic
-        return self.songs[:k]
+        user_prefs = {
+            "genre": user.favorite_genre,
+            "mood": user.favorite_mood,
+            "target_energy": user.target_energy,
+            "target_acousticness": 0.8 if user.likes_acoustic else 0.2,
+            "target_valence": 0.5,
+            "target_danceability": 0.5,
+        }
+        songs_as_dicts = [
+            {"id": s.id, "title": s.title, "artist": s.artist, "genre": s.genre,
+             "mood": s.mood, "energy": s.energy, "tempo_bpm": s.tempo_bpm,
+             "valence": s.valence, "danceability": s.danceability, "acousticness": s.acousticness}
+            for s in self.songs
+        ]
+        results = recommend_songs(user_prefs, songs_as_dicts, k=k)
+        song_by_id = {s.id: s for s in self.songs}
+        return [song_by_id[song_dict["id"]] for song_dict, _, _ in results]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
-        # TODO: Implement explanation logic
-        return "Explanation placeholder"
+        user_prefs = {
+            "genre": user.favorite_genre,
+            "mood": user.favorite_mood,
+            "target_energy": user.target_energy,
+            "target_acousticness": 0.8 if user.likes_acoustic else 0.2,
+            "target_valence": 0.5,
+            "target_danceability": 0.5,
+        }
+        song_dict = {
+            "id": song.id, "title": song.title, "artist": song.artist, "genre": song.genre,
+            "mood": song.mood, "energy": song.energy, "tempo_bpm": song.tempo_bpm,
+            "valence": song.valence, "danceability": song.danceability, "acousticness": song.acousticness,
+        }
+        final_score, reasons = score_song(user_prefs, song_dict)
+        return f"Score: {final_score:.2f} | " + " | ".join(reasons)
 
 def load_songs(csv_path: str) -> List[Dict]:
     """
     Loads songs from a CSV file.
-    Required by src/main.py
+    Accepts either an absolute path or a path relative to the project root.
     """
-    # Resolve path relative to the project root (one level up from src/)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    full_path = os.path.join(base_dir, csv_path)
+    if os.path.isabs(csv_path):
+        full_path = csv_path
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        full_path = os.path.join(base_dir, csv_path)
 
     songs = []
     with open(full_path, newline="", encoding="utf-8") as f:

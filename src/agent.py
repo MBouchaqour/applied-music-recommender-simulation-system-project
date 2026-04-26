@@ -1,0 +1,173 @@
+"""
+AI Music Recommendation Agent — powered by Claude with tool use.
+
+Agentic workflow:
+  1. User sends a natural language request
+  2. Claude interprets it and calls the search_songs tool with structured params
+  3. The tool runs the existing scoring engine against the catalog
+  4. Claude receives the results and formulates a conversational response
+"""
+
+import json
+import logging
+import os
+
+import anthropic
+from dotenv import load_dotenv
+
+from recommender import load_songs, recommend_songs
+
+load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("agent.log"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+_SONGS = None
+
+
+def _get_songs():
+    global _SONGS
+    if _SONGS is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _SONGS = load_songs(os.path.join(base_dir, "data", "songs.csv"))
+    return _SONGS
+
+
+SEARCH_SONGS_TOOL = {
+    "name": "search_songs",
+    "description": (
+        "Search the music catalog for songs that match the given preferences. "
+        "Always call this tool before making recommendations."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "genre": {
+                "type": "string",
+                "description": "Music genre (e.g. lofi, pop, rock, jazz, ambient, synthwave, hip-hop, blues, classical, edm, country, r&b, metal, reggae, soul)",
+            },
+            "mood": {
+                "type": "string",
+                "description": "Desired mood (e.g. chill, happy, intense, relaxed, focused, moody, melancholic, peaceful, euphoric, nostalgic, confident)",
+            },
+            "target_energy": {
+                "type": "number",
+                "description": "Energy level 0.0 (very calm) to 1.0 (very intense)",
+            },
+            "target_acousticness": {
+                "type": "number",
+                "description": "Acousticness 0.0 (electronic/produced) to 1.0 (acoustic/organic)",
+            },
+            "target_valence": {
+                "type": "number",
+                "description": "Emotional positivity 0.0 (dark/sad) to 1.0 (bright/happy)",
+            },
+            "target_danceability": {
+                "type": "number",
+                "description": "Danceability 0.0 (not danceable) to 1.0 (very danceable)",
+            },
+            "k": {
+                "type": "integer",
+                "description": "Number of songs to return (default: 5)",
+            },
+        },
+        "required": [],
+    },
+}
+
+SYSTEM_PROMPT = """You are a music recommendation assistant. When a user describes what they want to listen to, you MUST call the search_songs tool to retrieve matching songs from the catalog before responding.
+
+After receiving the tool results, present the top recommendations in a friendly, conversational way. For each song mention the title, artist, and one sentence explaining why it fits. End your response with a brief confidence note (e.g. "I'm confident these match your vibe" or "The catalog is limited for this genre so a couple picks are approximate").
+
+Available genres: lofi, pop, rock, ambient, jazz, synthwave, hip-hop, blues, classical, edm, country, r&b, metal, reggae, dream pop, soul, indie pop
+Available moods: chill, happy, intense, relaxed, focused, moody, confident, melancholic, peaceful, euphoric, nostalgic, romantic, angry, joyful"""
+
+
+def _execute_search_songs(tool_input: dict, songs: list) -> list:
+    """Run the scoring engine with the parameters Claude chose."""
+    user_prefs = {
+        "genre": tool_input.get("genre", ""),
+        "mood": tool_input.get("mood", ""),
+        "target_energy": tool_input.get("target_energy", 0.5),
+        "target_acousticness": tool_input.get("target_acousticness", 0.5),
+        "target_valence": tool_input.get("target_valence", 0.5),
+        "target_danceability": tool_input.get("target_danceability", 0.5),
+    }
+    k = tool_input.get("k", 5)
+    results = recommend_songs(user_prefs, songs, k=k)
+    return [
+        {
+            "title": song["title"],
+            "artist": song["artist"],
+            "genre": song["genre"],
+            "mood": song["mood"],
+            "confidence_score": score,
+            "why": explanation,
+        }
+        for song, score, explanation in results
+    ]
+
+
+def run_agent(user_query: str) -> str:
+    """
+    Run the music recommendation agent for a natural language query.
+    Returns Claude's final response as a string.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "ANTHROPIC_API_KEY is not set. Add it to your .env file or environment."
+        )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    songs = _get_songs()
+
+    logger.info("User query: %r", user_query)
+
+    messages = [{"role": "user", "content": user_query}]
+
+    # Agentic loop — keep going until Claude stops using tools
+    while True:
+        logger.info("Sending request to Claude...")
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            tools=[SEARCH_SONGS_TOOL],
+            messages=messages,
+        )
+
+        logger.info("Claude stop_reason: %s", response.stop_reason)
+
+        if response.stop_reason == "tool_use":
+            tool_block = next(b for b in response.content if b.type == "tool_use")
+            logger.info("Tool called: %s with params: %s", tool_block.name, tool_block.input)
+
+            tool_result = _execute_search_songs(tool_block.input, songs)
+            top_score = tool_result[0]["confidence_score"] if tool_result else "N/A"
+            logger.info("Tool returned %d results, top score: %s", len(tool_result), top_score)
+
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_block.id,
+                    "content": json.dumps(tool_result),
+                }],
+            })
+
+        else:
+            final_text = next(
+                (b.text for b in response.content if hasattr(b, "text")),
+                "Sorry, I couldn't generate a recommendation.",
+            )
+            logger.info("Agent completed successfully.")
+            return final_text
