@@ -115,10 +115,10 @@ def _execute_search_songs(tool_input: dict, songs: list) -> list:
     ]
 
 
-def run_agent(user_query: str) -> str:
+def _run(user_query: str) -> tuple:
     """
-    Run the music recommendation agent for a natural language query.
-    Returns Claude's final response as a string.
+    Core agentic loop. Returns (response_text, songs_list).
+    songs_list is the raw tool result from the last search_songs call.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -128,12 +128,11 @@ def run_agent(user_query: str) -> str:
 
     client = anthropic.Anthropic(api_key=api_key)
     songs = _get_songs()
+    captured_songs: list = []
 
     logger.info("User query: %r", user_query)
-
     messages = [{"role": "user", "content": user_query}]
 
-    # Agentic loop — keep going until Claude stops using tools
     while True:
         logger.info("Sending request to Claude...")
         response = client.messages.create(
@@ -150,9 +149,9 @@ def run_agent(user_query: str) -> str:
             tool_block = next(b for b in response.content if b.type == "tool_use")
             logger.info("Tool called: %s with params: %s", tool_block.name, tool_block.input)
 
-            tool_result = _execute_search_songs(tool_block.input, songs)
-            top_score = tool_result[0]["confidence_score"] if tool_result else "N/A"
-            logger.info("Tool returned %d results, top score: %s", len(tool_result), top_score)
+            captured_songs = _execute_search_songs(tool_block.input, songs)
+            top_score = captured_songs[0]["confidence_score"] if captured_songs else "N/A"
+            logger.info("Tool returned %d results, top score: %s", len(captured_songs), top_score)
 
             messages.append({"role": "assistant", "content": response.content})
             messages.append({
@@ -160,7 +159,7 @@ def run_agent(user_query: str) -> str:
                 "content": [{
                     "type": "tool_result",
                     "tool_use_id": tool_block.id,
-                    "content": json.dumps(tool_result),
+                    "content": json.dumps(captured_songs),
                 }],
             })
 
@@ -170,4 +169,21 @@ def run_agent(user_query: str) -> str:
                 "Sorry, I couldn't generate a recommendation.",
             )
             logger.info("Agent completed successfully.")
-            return final_text
+            return final_text, captured_songs
+
+
+def run_agent(user_query: str) -> str:
+    """Run the agent and return Claude's response as a string."""
+    text, _ = _run(user_query)
+    return text
+
+
+def run_agent_full(user_query: str) -> dict:
+    """Run the agent and return both the response text and structured song results.
+
+    Returns:
+        {"response": str, "songs": list[dict]}
+        Each song dict has: title, artist, genre, mood, confidence_score, why
+    """
+    text, songs = _run(user_query)
+    return {"response": text, "songs": songs}
