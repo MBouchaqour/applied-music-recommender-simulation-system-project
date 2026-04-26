@@ -253,8 +253,8 @@ def _render_main_app() -> None:
         st.rerun()
 
     st.markdown(
-        "Describe what you want to listen to — Claude searches **10,020 songs** "
-        "and explains every pick."
+        "Tell us what you're in the mood for and **AI Song Picker** will search "
+        "10,020 songs to find your perfect match — with a reason for every pick."
     )
     st.divider()
 
@@ -297,7 +297,7 @@ def _render_main_app() -> None:
         elif len(query_to_run) > MAX_QUERY_LEN:
             st.warning(f"Query too long — please keep it under {MAX_QUERY_LEN} characters.")
         else:
-            with st.spinner("Searching the catalog..."):
+            with st.spinner("Finding your perfect songs..."):
                 try:
                     profile = (
                         st.session_state.profile_cache
@@ -361,8 +361,8 @@ def _render_main_app() -> None:
 
         elif not entry["songs"] and entry["response"]:
             st.info(
-                "No catalog matches found for this request. "
-                "Try a different genre or mood."
+                "No strong matches found for that request. "
+                "Try rephrasing — for example, mention a genre, mood, or energy level."
             )
 
     if not st.session_state.history:
