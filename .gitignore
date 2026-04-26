@@ -18,5 +18,6 @@ venv/
 .env
 agent.log
 
-# User data — contains personal query history
+# User data — contains personal query history and credentials
 data/user_profiles.csv
+data/users.csv
