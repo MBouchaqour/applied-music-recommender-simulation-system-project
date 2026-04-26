@@ -82,7 +82,7 @@ SEARCH_SONGS_TOOL = {
     },
 }
 
-SYSTEM_PROMPT = """You are a music recommendation assistant. Only answer music-related requests.
+_BASE_SYSTEM_PROMPT = """You are a music recommendation assistant. Only answer music-related requests.
 
 If the user asks about something unrelated to music (coding, math, weather, personal advice, general knowledge, etc.), do NOT call the search_songs tool. Instead respond: "I can only help with music recommendations. What kind of music are you looking for?"
 
@@ -102,6 +102,35 @@ After receiving tool results, present recommendations conversationally. For each
 
 Available genres: lofi, pop, rock, ambient, jazz, synthwave, hip-hop, blues, classical, edm, country, r&b, metal, reggae, dream pop, soul, indie pop
 Available moods: chill, happy, intense, relaxed, focused, moody, confident, melancholic, peaceful, euphoric, nostalgic, romantic, angry, joyful"""
+
+
+def _build_system_prompt(profile: dict | None) -> str:
+    """Return the base system prompt, extended with personalization if available."""
+    if not profile or not profile.get("history"):
+        return _BASE_SYSTEM_PROMPT
+
+    history = profile["history"]  # already a list of dicts (parsed in load_profile)
+    top_genre = profile.get("top_genre") or ""
+    top_mood  = profile.get("top_mood")  or ""
+    query_count = int(profile.get("query_count", 0))
+
+    recent_queries = [h["query"] for h in history[-5:] if h.get("query")]
+
+    lines = ["\n\n--- Personalization context (registered user) ---"]
+    if top_genre:
+        lines.append(f"Favourite genre: {top_genre} (inferred from {query_count} past search(es))")
+    if top_mood:
+        lines.append(f"Favourite mood: {top_mood}")
+    if recent_queries:
+        quoted = ", ".join(f'"{q}"' for q in reversed(recent_queries))
+        lines.append(f"Recent searches: {quoted}")
+    lines.append(
+        "Use this history to bias your search_songs parameters toward the user's "
+        "established tastes unless the current request explicitly asks for something "
+        "different. Do not mention the stored history directly in your response."
+    )
+
+    return _BASE_SYSTEM_PROMPT + "\n".join(lines)
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -155,10 +184,11 @@ def _blocks_to_dicts(content) -> list:
     return result
 
 
-def _run(user_query: str) -> tuple:
+def _run(user_query: str, profile: dict | None = None) -> tuple:
     """
     Core agentic loop. Returns (response_text, songs_list).
     songs_list is the raw tool result from the last search_songs call.
+    profile — optional parsed user profile dict (history already a list).
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -170,7 +200,9 @@ def _run(user_query: str) -> tuple:
     songs = _get_songs()
     captured_songs: list = []
 
-    logger.info("User query: %r", user_query)
+    system_prompt = _build_system_prompt(profile)
+    is_personalized = bool(profile and profile.get("history"))
+    logger.info("User query: %r (personalized=%s)", user_query, is_personalized)
     messages = [{"role": "user", "content": user_query}]
 
     while True:
@@ -179,7 +211,7 @@ def _run(user_query: str) -> tuple:
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 tools=[SEARCH_SONGS_TOOL],
                 messages=messages,
             )
@@ -227,18 +259,21 @@ def _run(user_query: str) -> tuple:
             return final_text, captured_songs
 
 
-def run_agent(user_query: str) -> str:
+def run_agent(user_query: str, profile: dict | None = None) -> str:
     """Run the agent and return Claude's response as a string."""
-    text, _ = _run(user_query)
+    text, _ = _run(user_query, profile)
     return text
 
 
-def run_agent_full(user_query: str) -> dict:
+def run_agent_full(user_query: str, profile: dict | None = None) -> dict:
     """Run the agent and return both the response text and structured song results.
+
+    profile — optional parsed user profile dict; when provided, Claude's
+    search_songs parameters are biased toward the user's established tastes.
 
     Returns:
         {"response": str, "songs": list[dict]}
         Each song dict has: title, artist, genre, mood, confidence_score, why
     """
-    text, songs = _run(user_query)
+    text, songs = _run(user_query, profile)
     return {"response": text, "songs": songs}

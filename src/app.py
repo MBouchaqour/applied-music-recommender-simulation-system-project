@@ -299,7 +299,12 @@ def _render_main_app() -> None:
         else:
             with st.spinner("Searching the catalog..."):
                 try:
-                    result = run_agent_full(query_to_run)
+                    profile = (
+                        st.session_state.profile_cache
+                        if st.session_state.authenticated
+                        else None
+                    )
+                    result = run_agent_full(query_to_run, profile)
                     st.session_state.history.insert(0, {
                         "query":    query_to_run,
                         "response": result["response"],
